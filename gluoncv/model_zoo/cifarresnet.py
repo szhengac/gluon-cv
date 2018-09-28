@@ -114,10 +114,13 @@ class CIFARBasicBlockV2(HybridBlock):
         """Hybrid forward"""
         residual = x
 
+        self.xmean1 = F.mean(x, axis=1, exclude=True)
+
         x = self.bn1(x)
         x = F.Activation(x, act_type='relu')
         x = self.conv1(x)
 
+        self.xmean2 = F.mean(x, axis=1, exclude=True)
         x = self.bn2(x)
         x = F.Activation(x, act_type='relu')
         x = self.conv2(x)
@@ -223,9 +226,16 @@ class CIFARResNetV2(HybridBlock):
         return layer
 
     def hybrid_forward(self, F, x):
+        xmeans = []
+        xmeans.append(F.mean(x, axis=1, exclude=True))
         x = self.features(x)
+        for f in self.features:
+            if isinstance(f, nn.HybridSequential):
+                for n in f:
+                    xmeans.append(n.xmean1)
+                    xmeans.append(n.xmean2)
         x = self.output(x)
-        return x
+        return x, xmeans
 
 
 # Specification
