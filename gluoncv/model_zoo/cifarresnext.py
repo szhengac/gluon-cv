@@ -26,7 +26,8 @@ import os
 import math
 from mxnet import cpu
 from mxnet.gluon import nn
-from mxnet.gluon.block import HybridBlock
+from mxnet.gluon.block import HybridBlock, Block
+from .clusternorm import ClusterNorm
 
 
 class CIFARBlock(HybridBlock):
@@ -45,27 +46,27 @@ class CIFARBlock(HybridBlock):
         Whether to downsample the input.
     """
     def __init__(self, channels, cardinality, bottleneck_width,
-                 stride, downsample=False, **kwargs):
+                 stride, downsample=False, num_clusters=1, **kwargs):
         super(CIFARBlock, self).__init__(**kwargs)
         D = int(math.floor(channels * (bottleneck_width / 64)))
         group_width = cardinality * D
 
         self.body = nn.HybridSequential(prefix='')
         self.body.add(nn.Conv2D(group_width, kernel_size=1, use_bias=False))
-        self.body.add(nn.BatchNorm())
+        self.body.add(ClusterNorm(num_clusters=num_clusters, in_channels=group_width))
         self.body.add(nn.Activation('relu'))
         self.body.add(nn.Conv2D(group_width, kernel_size=3, strides=stride, padding=1,
                                 groups=cardinality, use_bias=False))
-        self.body.add(nn.BatchNorm())
+        self.body.add(ClusterNorm(num_clusters=num_clusters, in_channels=group_width))
         self.body.add(nn.Activation('relu'))
         self.body.add(nn.Conv2D(channels * 4, kernel_size=1, use_bias=False))
-        self.body.add(nn.BatchNorm())
+        self.body.add(ClusterNorm(num_clusters=num_clusters, in_channels=channels * 4))
 
         if downsample:
             self.downsample = nn.HybridSequential(prefix='')
             self.downsample.add(nn.Conv2D(channels * 4, kernel_size=1, strides=stride,
                                           use_bias=False))
-            self.downsample.add(nn.BatchNorm())
+            self.downsample.add(ClusterNorm(num_clusters=num_clusters, in_channels=channels * 4))
         else:
             self.downsample = None
 
@@ -98,16 +99,17 @@ class CIFARResNext(HybridBlock):
     classes : int, default 10
         Number of classification classes.
     """
-    def __init__(self, layers, cardinality, bottleneck_width, classes=10, **kwargs):
+    def __init__(self, layers, cardinality, bottleneck_width, classes=10, num_clusters=1, **kwargs):
         super(CIFARResNext, self).__init__(**kwargs)
         self.cardinality = cardinality
         self.bottleneck_width = bottleneck_width
+        self.num_clusters = num_clusters
         channels = 64
 
         with self.name_scope():
             self.features = nn.HybridSequential(prefix='')
             self.features.add(nn.Conv2D(channels, 3, 1, 1, use_bias=False))
-            self.features.add(nn.BatchNorm())
+            self.features.add(ClusterNorm(num_clusters=num_clusters, in_channels=channels))
             self.features.add(nn.Activation('relu'))
 
             for i, num_layer in enumerate(layers):
@@ -122,10 +124,10 @@ class CIFARResNext(HybridBlock):
         layer = nn.HybridSequential(prefix='stage%d_'%stage_index)
         with layer.name_scope():
             layer.add(CIFARBlock(channels, self.cardinality, self.bottleneck_width,
-                                 stride, True, prefix=''))
+                                 stride, True, self.num_clusters, prefix=''))
             for _ in range(num_layer-1):
                 layer.add(CIFARBlock(channels, self.cardinality, self.bottleneck_width,
-                                     1, False, prefix=''))
+                                     1, False, self.num_clusters, prefix=''))
         return layer
 
     def hybrid_forward(self, F, x):
