@@ -7,15 +7,7 @@ from mxnet.ndarray import NDArray
 from mxnet.gluon import nn
 
 
-class Norm(Block):
-    def __call__(self, x):
-        return super(Norm, self).__call__(x)
-
-    def forward(self, x):
-        raise NotImplementedError
-
-
-class ClusterNorm(HybridBlock, Norm):
+class ClusterNorm(HybridBlock):
     """Cluster normalization layer.
     Normalizes the input at each cluster
     """
@@ -68,29 +60,36 @@ class ClusterNorm(HybridBlock, Norm):
         return super(ClusterNorm, self).__call__(x)
 
     def forward(self, x):
-        x_mean = mx.nd.mean(x, axis=(0, self._kwargs['axis']), exclude=True, keepdims=True)
-        prob = mx.nd.softmax(self.proj(x_mean.reshape((0, -1))))
+        out, cluster_means, cluster_vars = super(ClusterNorm, self).forward(x)
         if autograd.is_training():
-            x_var = mx.nd.mean((x - x_mean)**2, axis=(0, self._kwargs['axis']), exclude=True, keepdims=True)
-            prob_sum = mx.nd.sum(prob, axis=0, keepdims=True).transpose()
-            weighted_mean = mx.nd.dot(prob, x_mean.reshape((0, -1)), transpose_a=True) / prob_sum
-            weighted_var = mx.nd.dot(prob, x_var.reshape((0, -1)), transpose_a=True) / prob_sum
-            self.t += 1
-            coef = 1. - self.momentum ** self.t
-            self.cluster_means.data()[:] = (self.momentum / coef) * self.cluster_means.data() \
-                                           + ((1.0 - self.momentum) / coef) * weighted_mean
-            self.cluster_vars.data()[:] = (self.momentum / coef) * self.cluster_vars.data() \
-                                          + ((1.0 - self.momentum) / coef) * weighted_var
-        return super(ClusterNorm, self).forward(x, prob)
+            with autograd.pause():
+                self.cluster_means.data()[:] = cluster_means
+                self.cluster_vars.data()[:] = cluster_vars
+        return out
 
-    def hybrid_forward(self, F, x, prob, gamma, beta, cluster_means, cluster_vars):
-        soft_means = F.dot(prob, cluster_means)
-        soft_vars = F.dot(prob, cluster_vars)
+    def hybrid_forward(self, F, x, gamma, beta, cluster_means, cluster_vars):
+        x_mean = F.mean(x, axis=(0, self._kwargs['axis']), exclude=True, keepdims=True)
+        prob = F.softmax(self.proj(x_mean.reshape((0, -1))))
+        if autograd.is_training():
+            x_var = F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, self._kwargs['axis']),
+                           exclude=True, keepdims=True)
+            prob_sum = F.sum(prob, axis=0, keepdims=True).transpose()
+            weighted_mean = F.broadcast_div(F.dot(prob, x_mean.reshape((0, -1)), transpose_a=True), prob_sum)
+            weighted_var = F.broadcast_div(F.dot(prob, x_var.reshape((0, -1)), transpose_a=True), prob_sum)
+            new_cluster_means = self.momentum * cluster_means \
+                                + (1.0 - self.momentum) * weighted_mean
+            new_cluster_vars = self.momentum * cluster_vars \
+                               + (1.0 - self.momentum) * weighted_var
+        else:
+            new_cluster_means = cluster_means
+            new_cluster_vars = cluster_vars
+        soft_means = F.dot(prob, new_cluster_means)
+        soft_vars = F.dot(prob, new_cluster_vars)
         normalized_x = F.broadcast_div(F.broadcast_sub(x, soft_means.reshape(self._shape)),
                                        F.sqrt(soft_vars.reshape(self._shape) + self.eps))
         out = F.broadcast_add(F.broadcast_mul(gamma.reshape(self._param_shape), normalized_x),
                               beta.reshape(self._param_shape))
-        return out
+        return out, new_cluster_means, new_cluster_vars
 
     def __repr__(self):
         s = '{name}({content}'
