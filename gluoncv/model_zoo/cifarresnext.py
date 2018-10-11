@@ -31,7 +31,7 @@ from mxnet.gluon.block import HybridBlock, Block
 from .clusternorm import ClusterNorm
 
 
-class CIFARBlock(Block):
+class CIFARBlock(HybridBlock):
     r"""Bottleneck Block from `"Aggregated Residual Transformations for Deep Neural Networks"
     <http://arxiv.org/abs/1611.05431>`_ paper.
 
@@ -52,7 +52,7 @@ class CIFARBlock(Block):
         D = int(math.floor(channels * (bottleneck_width / 64)))
         group_width = cardinality * D
 
-        self.body = nn.Sequential(prefix='')
+        self.body = nn.HybridSequential(prefix='')
         self.body.add(nn.Conv2D(group_width, kernel_size=1, use_bias=False))
         self.body.add(ClusterNorm(num_clusters=num_clusters, in_channels=group_width))
         self.body.add(nn.Activation('relu'))
@@ -64,7 +64,7 @@ class CIFARBlock(Block):
         self.body.add(ClusterNorm(num_clusters=num_clusters, in_channels=channels * 4))
 
         if downsample:
-            self.downsample = nn.Sequential(prefix='')
+            self.downsample = nn.HybridSequential(prefix='')
             self.downsample.add(nn.Conv2D(channels * 4, kernel_size=1, strides=stride,
                                           use_bias=False))
             self.downsample.add(ClusterNorm(num_clusters=num_clusters, in_channels=channels * 4))
@@ -85,7 +85,7 @@ class CIFARBlock(Block):
         return x
 
 # Nets
-class CIFARResNext(Block):
+class CIFARResNext(HybridBlock):
     r"""ResNext model from `"Aggregated Residual Transformations for Deep Neural Networks"
     <http://arxiv.org/abs/1611.05431>`_ paper.
 
@@ -108,7 +108,7 @@ class CIFARResNext(Block):
         channels = 64
 
         with self.name_scope():
-            self.features = nn.Sequential(prefix='')
+            self.features = nn.HybridSequential(prefix='')
             self.features.add(nn.Conv2D(channels, 3, 1, 1, use_bias=False))
             self.features.add(ClusterNorm(num_clusters=num_clusters, in_channels=channels))
             self.features.add(nn.Activation('relu'))
@@ -122,7 +122,7 @@ class CIFARResNext(Block):
             self.output = nn.Dense(classes)
 
     def _make_layer(self, channels, num_layer, stride, stage_index):
-        layer = nn.Sequential(prefix='stage%d_'%stage_index)
+        layer = nn.HybridSequential(prefix='stage%d_'%stage_index)
         with layer.name_scope():
             layer.add(CIFARBlock(channels, self.cardinality, self.bottleneck_width,
                                  stride, True, self.num_clusters, prefix=''))

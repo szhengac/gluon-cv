@@ -63,8 +63,8 @@ class ClusterNorm(HybridBlock):
         out, cluster_means, cluster_vars = super(ClusterNorm, self).forward(x)
         if autograd.is_training():
             with autograd.pause():
-                self.cluster_means.data()[:] = cluster_means
-                self.cluster_vars.data()[:] = cluster_vars
+                self.cluster_means.data(x.context)[:] = cluster_means
+                self.cluster_vars.data(x.context)[:] = cluster_vars
         return out
 
     def hybrid_forward(self, F, x, gamma, beta, cluster_means, cluster_vars):
@@ -83,8 +83,10 @@ class ClusterNorm(HybridBlock):
         else:
             new_cluster_means = cluster_means
             new_cluster_vars = cluster_vars
-        soft_means = F.dot(prob, new_cluster_means)
-        soft_vars = F.dot(prob, new_cluster_vars)
+            weighted_mean = cluster_means
+            weighted_var = cluster_vars
+        soft_means = F.dot(prob, weighted_mean)
+        soft_vars = F.dot(prob, weighted_var)
         normalized_x = F.broadcast_div(F.broadcast_sub(x, soft_means.reshape(self._shape)),
                                        F.sqrt(soft_vars.reshape(self._shape) + self.eps))
         out = F.broadcast_add(F.broadcast_mul(gamma.reshape(self._param_shape), normalized_x),
