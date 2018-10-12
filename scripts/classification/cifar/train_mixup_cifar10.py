@@ -81,7 +81,7 @@ if model_name.startswith('cifar_wideresnet'):
     kwargs = {'classes': classes,
               'drop_rate': opt.drop_rate}
 else:
-    kwargs = {'classes': classes, 'window_size': opt.window_size}
+    kwargs = {'classes': classes, 'window_size': opt.window_size, 'n_gpus': opt.num_gpus}
 net = get_model(model_name, **kwargs)
 model_name += '_mixup'
 if opt.resume_from:

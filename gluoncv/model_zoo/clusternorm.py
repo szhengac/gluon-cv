@@ -14,7 +14,7 @@ class ClusterNorm(HybridBlock):
 
     def __init__(self, axis=1, num_clusters=1, momentum=0.9, epsilon=1e-5, center=True, scale=True,
                  beta_initializer='zeros', gamma_initializer='ones',
-                 cluster_mean_initializer='zeros', cluster_variance_initializer='zeros',
+                 cluster_mean_initializer='zeros', cluster_variance_initializer='ones',
                  in_channels=0, **kwargs):
         super(ClusterNorm, self).__init__(**kwargs)
         self._kwargs = {'axis': axis, 'num_clusters': num_clusters}
