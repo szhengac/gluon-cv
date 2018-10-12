@@ -12,10 +12,10 @@ class MultiBatchNorm(HybridBlock):
     Normalizes the input at each cluster
     """
 
-    def __init__(self, axis=1, window_size=3, momentum=0.9, epsilon=1e-5, center=True, scale=True,
+    def __init__(self, axis=1, window_size=3, momentum=0.99, epsilon=1e-5, center=True, scale=True,
                  use_global_stats=False, beta_initializer='zeros', gamma_initializer='ones',
                  running_mean_initializer='zeros', running_variance_initializer='ones',
-                 in_channels=0, **kwargs):
+                 in_channels=0, n_gpus=1, **kwargs):
         super(MultiBatchNorm, self).__init__(**kwargs)
         self._kwargs = {'axis': axis, 'eps': epsilon, 'momentum': momentum,
                         'fix_gamma': not scale, 'use_global_stats': use_global_stats}
@@ -69,8 +69,8 @@ class MultiBatchNorm(HybridBlock):
         shape = [1] * 4
         shape[axis] = in_channels
         self._shape = tuple(shape)
-        self.idx = 0
-        self.occupied_size = 0
+        self.occupied_size = [0] * n_gpus
+        self.idx = [0] * n_gpus
 
     def cast(self, dtype):
         if np.dtype(dtype).name == 'float16':
@@ -82,24 +82,21 @@ class MultiBatchNorm(HybridBlock):
 
     def forward(self, x):
         if autograd.is_training():
+            ctx = x.context
             out, x_mean, x_var,\
             window_mean, window_var,\
             batch_means, batch_vars,\
             running_mean, running_var = super(MultiBatchNorm, self).forward(x)
-            self.occupied_size = min(self.occupied_size + 1, self.window_size)
+            self.occupied_size[ctx.device_id] = min(self.occupied_size[ctx.device_id] + 1, self.window_size)
             with autograd.pause():
-                self.window_mean.data(x.context)[:] = window_mean
-                self.window_var.data(x.context)[:] = window_var
-                self.batch_means.data(x.context)[:] = batch_means
-                self.batch_vars.data(x.context)[:] = batch_vars
-                self.batch_means.data(x.context)[self.idx, :] = x_mean
-                self.batch_vars.data(x.context)[self.idx, :] = x_var / self.occupied_size
-                self.running_mean.data(x.context)[:] = running_mean
-                self.running_var.data(x.context)[:] = running_var
-
-                print(mx.nd.sum(self.window_mean.data(x.context) - mx.nd.sum(self.batch_means.data(), axis=0) / self.occupied_size))
-                print(mx.nd.sum(self.window_var.data(x.context) - mx.nd.sum(self.batch_vars.data(), axis=0)))
-            self.idx = (self.idx + 1) % self.window_size
+                self.window_mean.data(ctx)[:] = window_mean
+                self.window_var.data(ctx)[:] = window_var
+                self.batch_vars.data(ctx)[:] = batch_vars
+                self.batch_means.data(ctx)[self.idx[ctx.device_id], :] = x_mean
+                self.batch_vars.data(ctx)[self.idx[ctx.device_id], :] = x_var / self.occupied_size[ctx.device_id]
+                self.running_mean.data(ctx)[:] = running_mean
+                self.running_var.data(ctx)[:] = running_var
+            self.idx[ctx.device_id] = (self.idx[ctx.device_id] + 1) % self.window_size
         else:
             out = super(MultiBatchNorm, self).forward(x)
         return out
@@ -109,9 +106,9 @@ class MultiBatchNorm(HybridBlock):
         if autograd.is_training():
             N = np.prod(x.shape) / x.shape[self.axis]
             x_mean = F.mean(x, axis=self.axis, exclude=True)
-            if self.occupied_size >= self.window_size:
-                print('22222222222')
-                mean_increment = (x_mean - batch_means[self.idx, :]) / self.window_size
+            occupied_size = self.occupied_size[x.context.device_id]
+            if occupied_size == self.window_size:
+                mean_increment = (x_mean - batch_means[self.idx[x.context.device_id], :]) / self.window_size
                 batch_vars = F.broadcast_add(
                     batch_vars - F.broadcast_mul((2.0 / self.window_size) * mean_increment.reshape((1, -1)),
                                                  F.broadcast_sub(batch_means,
@@ -120,25 +117,23 @@ class MultiBatchNorm(HybridBlock):
                 window_mean = window_mean + mean_increment
                 x_var = F.mean(F.square(F.broadcast_sub(x, window_mean.reshape(self._shape))),
                                axis=self.axis, exclude=True)
-                window_var = window_var + F.square(mean_increment) \
-                             + x_var / self.window_size - batch_vars[self.idx, :]
+                window_var = window_var + F.square(mean_increment) + x_var / self.window_size - batch_vars[self.idx[x.context.device_id], :]
                 N *= self.window_size
             else:
-                print('11111111111')
-                mean_increment = (x_mean - window_mean) / (self.occupied_size + 1)
-                if self.occupied_size >= 1:
+                mean_increment = (x_mean - window_mean) / (occupied_size + 1)
+                if occupied_size >= 1:
                     batch_vars = F.broadcast_add(
-                        batch_vars - F.broadcast_mul((2.0 / self.occupied_size) * mean_increment.reshape((1, -1)),
+                        batch_vars - F.broadcast_mul((2.0 / occupied_size) * mean_increment.reshape((1, -1)),
                                                      F.broadcast_sub(batch_means,
                                                                      window_mean.reshape((1, -1)))),
-                        F.square(mean_increment.reshape((1, -1))) / self.occupied_size)
-                    batch_vars = batch_vars * (self.occupied_size / (self.occupied_size + 1.0))
+                        F.square(mean_increment.reshape((1, -1))) / occupied_size)
+                    batch_vars = batch_vars * (occupied_size / (occupied_size + 1.0))
                 window_mean = window_mean + mean_increment
                 x_var = F.mean(F.square(F.broadcast_sub(x, window_mean.reshape(self._shape))),
                                axis=self.axis, exclude=True)
-                window_var = (self.occupied_size / (self.occupied_size + 1.0)) * (window_var + F.square(mean_increment)) \
-                             + x_var / (self.occupied_size + 1)
-                N *= self.occupied_size + 1
+                window_var = (occupied_size / (occupied_size + 1.0)) * (window_var + F.square(mean_increment)) \
+                             + x_var / (occupied_size + 1)
+                N *= occupied_size + 1
             running_mean = self.momentum * running_mean \
                            + (1.0 - self.momentum) * window_mean
             running_var = self.momentum * running_var \
