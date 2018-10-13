@@ -20,6 +20,7 @@ from mxnet.gluon import nn
 from mxnet.gluon.data.vision import transforms
 
 from gluoncv.model_zoo import get_model
+from gluoncv.model_zoo.multibatchnorm import MultiBatchNorm
 from gluoncv.data import transforms as gcv_transforms
 from gluoncv.utils import makedirs, TrainingHistory
 
@@ -166,6 +167,8 @@ def train(epochs, ctx):
         train_loss = 0
         num_batch = len(train_data)
         alpha = 1
+        if epoch >= epochs // 3:
+            MultiBatchNorm.start = True
 
         if epoch == lr_decay_epoch[lr_decay_count]:
             trainer.set_learning_rate(trainer.learning_rate*lr_decay)

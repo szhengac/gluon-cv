@@ -5,14 +5,15 @@ from mxnet import autograd, test_utils
 from mxnet.gluon.block import HybridBlock, Block
 from mxnet.ndarray import NDArray
 from mxnet.gluon import nn
+__all__ = ['MultiBatchNorm']
 
 
 class MultiBatchNorm(HybridBlock):
     """Multi batch normalization layer.
     Normalizes the input at each cluster
     """
-
-    def __init__(self, axis=1, window_size=3, momentum=0.99, epsilon=1e-5, center=True, scale=True,
+    start = False
+    def __init__(self, axis=1, window_size=3, momentum=0.9, epsilon=1e-5, center=True, scale=True,
                  use_global_stats=False, beta_initializer='zeros', gamma_initializer='ones',
                  running_mean_initializer='zeros', running_variance_initializer='ones',
                  in_channels=0, n_gpus=1, **kwargs):
@@ -81,6 +82,8 @@ class MultiBatchNorm(HybridBlock):
         return super(MultiBatchNorm, self).__call__(x)
 
     def forward(self, x):
+        if not MultiBatchNorm.start:
+            return super(MultiBatchNorm, self).forward(x)
         if autograd.is_training():
             ctx = x.context
             out, x_mean, x_var,\
@@ -103,6 +106,8 @@ class MultiBatchNorm(HybridBlock):
 
     def hybrid_forward(self, F, x, gamma, beta, window_mean, window_var,
                        batch_means, batch_vars, running_mean, running_var):
+        if not MultiBatchNorm.start:
+            return F.BatchNorm(x, gamma, beta, running_mean, running_var, name='fwd', **self._kwargs)
         if autograd.is_training():
             N = np.prod(x.shape) / x.shape[self.axis]
             x_mean = F.mean(x, axis=self.axis, exclude=True)
