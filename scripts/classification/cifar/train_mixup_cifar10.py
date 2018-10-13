@@ -37,8 +37,8 @@ parser.add_argument('--num-epochs', type=int, default=3,
                     help='number of training epochs.')
 parser.add_argument('--lr', type=float, default=0.1,
                     help='learning rate. default is 0.1.')
-parser.add_argument('--window-size', type=int, default=3,
-                    help='window size in sliding normalization.')
+parser.add_argument('--num-groups', type=int, default=32,
+                    help='number of groups in normalization.')
 parser.add_argument('--momentum', type=float, default=0.9,
                     help='momentum value for optimizer, default is 0.9.')
 parser.add_argument('--wd', type=float, default=0.0001,
@@ -81,7 +81,7 @@ if model_name.startswith('cifar_wideresnet'):
     kwargs = {'classes': classes,
               'drop_rate': opt.drop_rate}
 else:
-    kwargs = {'classes': classes, 'window_size': opt.window_size}
+    kwargs = {'classes': classes, 'num_groups': opt.num_groups}
 net = get_model(model_name, **kwargs)
 model_name += '_mixup'
 if opt.resume_from:

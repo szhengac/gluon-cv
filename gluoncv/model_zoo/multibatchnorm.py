@@ -7,8 +7,8 @@ from mxnet.ndarray import NDArray
 from mxnet.gluon import nn
 
 
-class MultiBatchNorm(HybridBlock):
-    """Multi batch normalization layer.
+class BlockNorm(HybridBlock):
+    """Block normalization layer.
     Normalizes the input at each cluster
     """
 
@@ -16,7 +16,7 @@ class MultiBatchNorm(HybridBlock):
                  use_global_stats=False, beta_initializer='zeros', gamma_initializer='ones',
                  running_mean_initializer='zeros', running_variance_initializer='ones',
                  in_channels=0, n_gpus=1, **kwargs):
-        super(MultiBatchNorm, self).__init__(**kwargs)
+        super(BlockNorm, self).__init__(**kwargs)
         self._kwargs = {'axis': axis, 'eps': epsilon, 'momentum': momentum,
                         'fix_gamma': not scale, 'use_global_stats': use_global_stats}
 
@@ -75,18 +75,18 @@ class MultiBatchNorm(HybridBlock):
     def cast(self, dtype):
         if np.dtype(dtype).name == 'float16':
             dtype = 'float32'
-        super(MultiBatchNorm, self).cast(dtype)
+        super(BlockNorm, self).cast(dtype)
 
     def __call__(self, x):
-        return super(MultiBatchNorm, self).__call__(x)
+        return super(BlockNorm, self).__call__(x)
 
     def forward(self, x):
         if autograd.is_training():
             ctx = x.context
-            out, x_mean, x_var,\
+            out, x_mean, x_var, x_varr,\
             window_mean, window_var,\
             batch_means, batch_vars,\
-            running_mean, running_var = super(MultiBatchNorm, self).forward(x)
+            running_mean, running_var = super(BlockNorm, self).forward(x)
             self.occupied_size[ctx.device_id] = min(self.occupied_size[ctx.device_id] + 1, self.window_size)
             with autograd.pause():
                 self.window_mean.data(ctx)[:] = window_mean
@@ -134,6 +134,8 @@ class MultiBatchNorm(HybridBlock):
                 window_var = (occupied_size / (occupied_size + 1.0)) * (window_var + F.square(mean_increment)) \
                              + x_var / (occupied_size + 1)
                 N *= occupied_size + 1
+            x_varr = F.mean(F.square(F.broadcast_sub(x, x_mean.reshape(self._shape))),
+                            axis=self.axis, exclude=True)
             running_mean = self.momentum * running_mean \
                            + (1.0 - self.momentum) * window_mean
             running_var = self.momentum * running_var \
@@ -142,7 +144,7 @@ class MultiBatchNorm(HybridBlock):
                                 F.sqrt(window_var.reshape(self._shape) + self.eps))
             out = F.broadcast_add(F.broadcast_mul(gamma.reshape(self._shape), x),
                                   beta.reshape(self._shape))
-            return out, x_mean, x_var, window_mean, window_var, \
+            return out, x_mean, x_var, x_varr, window_mean, window_var, \
                    batch_means, batch_vars, running_mean, running_var
         else:
             return F.BatchNorm(x, gamma, beta, running_mean, running_var, name='fwd',
