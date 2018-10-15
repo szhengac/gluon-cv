@@ -21,6 +21,8 @@ parser.add_argument('--batch-size', type=int, default=32,
                     help='training batch size per device (CPU/GPU).')
 parser.add_argument('--num-gpus', type=int, default=0,
                     help='number of gpus to use.')
+parser.add_argument('--gpu-id', type=int, default=0,
+                    help='gpu id.')
 parser.add_argument('--model', type=str, default='resnet',
                     help='model to use. options are resnet and wrn. default is resnet.')
 parser.add_argument('-j', '--num-data-workers', dest='num_workers', default=4, type=int,
@@ -58,7 +60,8 @@ classes = 10
 
 num_gpus = opt.num_gpus
 batch_size *= max(1, num_gpus)
-context = [mx.gpu(i) for i in range(num_gpus)] if num_gpus > 0 else [mx.cpu()]
+#context = [mx.gpu(i) for i in range(num_gpus)] if num_gpus > 0 else [mx.cpu()]
+context = [mx.gpu(opt.gpu_id)]
 num_workers = opt.num_workers
 
 lr_decay = opt.lr_decay

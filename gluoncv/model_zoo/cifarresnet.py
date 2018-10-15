@@ -28,6 +28,7 @@ import os
 from mxnet.gluon.block import HybridBlock
 from mxnet.gluon import nn
 from mxnet import cpu
+from .bgnorm import BGNorm
 
 # Helpers
 def _conv3x3(channels, stride, in_channels):
@@ -52,19 +53,22 @@ class CIFARBasicBlockV1(HybridBlock):
     in_channels : int, default 0
         Number of input channels. Default is 0, to infer from the graph.
     """
-    def __init__(self, channels, stride, downsample=False, in_channels=0, **kwargs):
+    def __init__(self, channels, stride, downsample=False, in_channels=0, num_groups=32, **kwargs):
         super(CIFARBasicBlockV1, self).__init__(**kwargs)
         self.body = nn.HybridSequential(prefix='')
         self.body.add(_conv3x3(channels, stride, in_channels))
-        self.body.add(nn.BatchNorm())
+        self.body.add(BGNorm(num_groups=num_groups, in_channels=channels))
+        #self.body.add(nn.BatchNorm())
         self.body.add(nn.Activation('relu'))
         self.body.add(_conv3x3(channels, 1, channels))
-        self.body.add(nn.BatchNorm())
+        #self.body.add(nn.BatchNorm())
+        self.body.add(BGNorm(num_groups=num_groups, in_channels=channels))
         if downsample:
             self.downsample = nn.HybridSequential(prefix='')
             self.downsample.add(nn.Conv2D(channels, kernel_size=1, strides=stride,
                                           use_bias=False, in_channels=in_channels))
-            self.downsample.add(nn.BatchNorm())
+            #self.body.add(nn.BatchNorm())
+            self.downsample.add(BGNorm(num_groups=num_groups, in_channels=channels))
         else:
             self.downsample = None
 
@@ -98,11 +102,11 @@ class CIFARBasicBlockV2(HybridBlock):
     in_channels : int, default 0
         Number of input channels. Default is 0, to infer from the graph.
     """
-    def __init__(self, channels, stride, downsample=False, in_channels=0, **kwargs):
+    def __init__(self, channels, stride, downsample=False, in_channels=0, num_groups=32, **kwargs):
         super(CIFARBasicBlockV2, self).__init__(**kwargs)
-        self.bn1 = nn.BatchNorm()
+        self.bn1 = BGNorm(num_groups=num_groups)
         self.conv1 = _conv3x3(channels, stride, in_channels)
-        self.bn2 = nn.BatchNorm()
+        self.bn2 = BGNorm(num_groups=num_groups)
         self.conv2 = _conv3x3(channels, 1, channels)
         if downsample:
             self.downsample = nn.Conv2D(channels, 1, stride, use_bias=False,
@@ -143,29 +147,30 @@ class CIFARResNetV1(HybridBlock):
     classes : int, default 10
         Number of classification classes.
     """
-    def __init__(self, block, layers, channels, classes=10, **kwargs):
+    def __init__(self, block, layers, channels, classes=10, num_groups=None, **kwargs):
         super(CIFARResNetV1, self).__init__(**kwargs)
         assert len(layers) == len(channels) - 1
         with self.name_scope():
             self.features = nn.HybridSequential(prefix='')
             self.features.add(nn.Conv2D(channels[0], 3, 1, 1, use_bias=False))
-            self.features.add(nn.BatchNorm())
+            self.features.add(BGNorm(num_groups=num_groups[0], in_channels=channels[0]))
+            #self.features.add(nn.BatchNorm())
 
             for i, num_layer in enumerate(layers):
                 stride = 1 if i == 0 else 2
                 self.features.add(self._make_layer(block, num_layer, channels[i+1],
-                                                   stride, i+1, in_channels=channels[i]))
+                                                   stride, i+1, in_channels=channels[i], num_groups=num_groups[i]))
             self.features.add(nn.GlobalAvgPool2D())
 
             self.output = nn.Dense(classes, in_units=channels[-1])
 
-    def _make_layer(self, block, layers, channels, stride, stage_index, in_channels=0):
+    def _make_layer(self, block, layers, channels, stride, stage_index, in_channels=0, num_groups=32):
         layer = nn.HybridSequential(prefix='stage%d_'%stage_index)
         with layer.name_scope():
-            layer.add(block(channels, stride, channels != in_channels, in_channels=in_channels,
+            layer.add(block(channels, stride, channels != in_channels, in_channels=in_channels, num_groups=num_groups,
                             prefix=''))
             for _ in range(layers-1):
-                layer.add(block(channels, 1, False, in_channels=channels, prefix=''))
+                layer.add(block(channels, 1, False, in_channels=channels, num_groups=num_groups, prefix=''))
         return layer
 
     def hybrid_forward(self, F, x):
@@ -191,12 +196,12 @@ class CIFARResNetV2(HybridBlock):
     classes : int, default 10
         Number of classification classes.
     """
-    def __init__(self, block, layers, channels, classes=10, **kwargs):
+    def __init__(self, block, layers, channels, classes=10, num_groups=32, **kwargs):
         super(CIFARResNetV2, self).__init__(**kwargs)
         assert len(layers) == len(channels) - 1
         with self.name_scope():
             self.features = nn.HybridSequential(prefix='')
-            self.features.add(nn.BatchNorm(scale=False, center=False))
+            self.features.add(BGNorm(num_groups=3, scale=False, center=False))
 
             self.features.add(nn.Conv2D(channels[0], 3, 1, 1, use_bias=False))
 
@@ -204,22 +209,22 @@ class CIFARResNetV2(HybridBlock):
             for i, num_layer in enumerate(layers):
                 stride = 1 if i == 0 else 2
                 self.features.add(self._make_layer(block, num_layer, channels[i+1],
-                                                   stride, i+1, in_channels=in_channels))
+                                                   stride, i+1, in_channels=in_channels, num_groups=num_groups))
                 in_channels = channels[i+1]
-            self.features.add(nn.BatchNorm())
+            self.features.add(BGNorm(num_groups=num_groups))
             self.features.add(nn.Activation('relu'))
             self.features.add(nn.GlobalAvgPool2D())
             self.features.add(nn.Flatten())
 
             self.output = nn.Dense(classes, in_units=in_channels)
 
-    def _make_layer(self, block, layers, channels, stride, stage_index, in_channels=0):
+    def _make_layer(self, block, layers, channels, stride, stage_index, in_channels=0, num_groups=32):
         layer = nn.HybridSequential(prefix='stage%d_'%stage_index)
         with layer.name_scope():
-            layer.add(block(channels, stride, channels != in_channels, in_channels=in_channels,
+            layer.add(block(channels, stride, channels != in_channels, in_channels=in_channels, num_groups=num_groups,
                             prefix=''))
             for _ in range(layers-1):
-                layer.add(block(channels, 1, False, in_channels=channels, prefix=''))
+                layer.add(block(channels, 1, False, in_channels=channels, num_groups=num_groups, prefix=''))
         return layer
 
     def hybrid_forward(self, F, x):
@@ -266,7 +271,7 @@ def get_cifar_resnet(version, num_layers, pretrained=False, ctx=cpu(),
 
     resnet_class = resnet_net_versions[version-1]
     block_class = resnet_block_versions[version-1]
-    net = resnet_class(block_class, layers, channels, **kwargs)
+    net = resnet_class(block_class, layers, channels, num_groups=[8, 16, 32], **kwargs)
     if pretrained:
         from .model_store import get_model_file
         net.load_params(get_model_file('cifar_resnet%d_v%d'%(num_layers, version),
