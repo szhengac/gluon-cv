@@ -57,7 +57,7 @@ class BGNorm(HybridBlock):
     """
     def __init__(self, axis=1, num_groups=32, momentum=0.9, epsilon=1e-5, center=True, scale=True,
                  beta_initializer='zeros', gamma_initializer='ones',
-                 in_channels=0, n=0, N=0, use_global=False, return_global=False, **kwargs):
+                 in_channels=0, n=0, N=0, **kwargs):
         super(BGNorm, self).__init__(**kwargs)
         assert axis == 1
         if in_channels != 0:
@@ -78,9 +78,6 @@ class BGNorm(HybridBlock):
         self.n = n
         self.N = N
 
-        self.use_global = use_global
-        self.return_global = return_global
-
     def cast(self, dtype):
         if np.dtype(dtype).name == 'float16':
             dtype = 'float32'
@@ -88,24 +85,16 @@ class BGNorm(HybridBlock):
 
     def hybrid_forward(self, F, x, global_mean, global_var, gamma, beta):
         x = x.reshape((0, -4, self.num_groups, -1, 0, 0))
-        #x_mean = (1 - self.p) * F.mean(x, axis=(0, 1), exclude=True, keepdims=True)
-        #x_var = (1.0 - self.p) * F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, 1), exclude=True, keepdims=True) + self.p * F.square(x_mean)
         x_mean = F.mean(x, axis=(0, 1), exclude=True, keepdims=True)
-        #x_var = F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, 1), exclude=True, keepdims=True)
-        if not use_global:
-            x_var = F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, 1), exclude=True, keepdims=True)
-            x = F.broadcast_div(F.broadcast_sub(x, x_mean), F.sqrt(x_var + self.eps))
-        else:
-            increment = (1 - self.n / self.N) * (x_mean - global_mean)
-            global_mean = global_mean + increment
-            x_var = F.sum(F.square(F.broadcast_sub(x, global_mean)), axis=(0, 1), exclude=True, keepdims=True)
-            global_var = (global_var + F.square(increment)) * (self.n / self.N) + x_var / self.N
-            x = F.broadcast_div(F.broadcast_sub(x, global_mean), F.sqrt(global_var + self.eps))
+        increment = (1 - self.n / self.N) * (x_mean - global_mean)
+        global_mean = global_mean + increment
+        x_var = F.sum(F.square(F.broadcast_sub(x, global_mean)), axis=(0, 1), exclude=True, keepdims=True)
+        global_var = (global_var + F.square(increment)) * (self.n / self.N) + x_var / self.N
+        x = F.broadcast_div(F.broadcast_sub(x, global_mean), F.sqrt(global_var + self.eps))
         x = x.reshape((0, -3, 0, 0))
-        out =  F.broadcast_add(F.broadcast_mul(x, gamma.reshape((1, -1, 1, 1))),
-                               beta.reshape((1, -1, 1, 1)))
-        if self.return_global:
-            return out, global_mean
+        out = F.broadcast_add(F.broadcast_mul(x, gamma.reshape((1, -1, 1, 1))),
+                              beta.reshape((1, -1, 1, 1)))
+        return out, global_mean, global_var
 
     def __repr__(self):
         s = '{name}({content}'
