@@ -56,20 +56,17 @@ class BGNorm(HybridBlock):
         - **out**: output tensor with the same shape as `data`.
     """
     def __init__(self, axis=1, num_groups=32, momentum=0.9, epsilon=1e-5, center=True, scale=True,
-                 use_global_stats=False, beta_initializer='zeros', gamma_initializer='ones',
-                 running_mean_initializer='zeros', running_variance_initializer='ones',
-                 in_channels=0, **kwargs):
+                 beta_initializer='zeros', gamma_initializer='ones',
+                 in_channels=0, n=0, N=0, use_global=False, return_global=False, **kwargs):
         super(BGNorm, self).__init__(**kwargs)
-        self._kwargs = {'axis': axis, 'eps': epsilon, 'momentum': momentum,
-                        'fix_gamma': True, 'use_global_stats': use_global_stats}
-        assert in_channels != 0
-        assert in_channels % num_groups == 0
         assert axis == 1
         if in_channels != 0:
             self.in_channels = in_channels
+            assert in_channels % num_groups == 0
 
         self.num_groups = num_groups
-        self.channels_per_group = in_channels // num_groups
+        self.p = 0.5
+        self.eps = epsilon
         self.gamma = self.params.get('gamma', grad_req='write' if scale else 'null',
                                      shape=(in_channels,), init=gamma_initializer,
                                      allow_deferred_init=True,
@@ -78,36 +75,37 @@ class BGNorm(HybridBlock):
                                     shape=(in_channels,), init=beta_initializer,
                                     allow_deferred_init=True,
                                     differentiable=center)
-        self.gamma_fake = self.params.get('gamma_fake', grad_req='null',
-                                          shape=(self.channels_per_group,), init=gamma_initializer,
-                                          allow_deferred_init=True,
-                                          differentiable=False)
-        self.beta_fake = self.params.get('beta_fake', grad_req='null',
-                                         shape=(self.channels_per_group,), init=beta_initializer,
-                                         allow_deferred_init=True,
-                                         differentiable=False)
-        self.running_mean = self.params.get('running_mean', grad_req='null',
-                                            shape=(self.channels_per_group,),
-                                            init=running_mean_initializer,
-                                            allow_deferred_init=True,
-                                            differentiable=False)
-        self.running_var = self.params.get('running_var', grad_req='null',
-                                           shape=(self.channels_per_group,),
-                                           init=running_variance_initializer,
-                                           allow_deferred_init=True,
-                                           differentiable=False)
+        self.n = n
+        self.N = N
+
+        self.use_global = use_global
+        self.return_global = return_global
 
     def cast(self, dtype):
         if np.dtype(dtype).name == 'float16':
             dtype = 'float32'
         super(BGNorm, self).cast(dtype)
 
-    def hybrid_forward(self, F, x, gamma, beta, gamma_fake, beta_fake, running_mean, running_var):
-        x = x.reshape((0, -4, self.channels_per_group, -1, 0, 0))
-        x = F.BatchNorm(x, gamma_fake, beta_fake, running_mean, running_var, name='fwd', **self._kwargs)
+    def hybrid_forward(self, F, x, global_mean, global_var, gamma, beta):
+        x = x.reshape((0, -4, self.num_groups, -1, 0, 0))
+        #x_mean = (1 - self.p) * F.mean(x, axis=(0, 1), exclude=True, keepdims=True)
+        #x_var = (1.0 - self.p) * F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, 1), exclude=True, keepdims=True) + self.p * F.square(x_mean)
+        x_mean = F.mean(x, axis=(0, 1), exclude=True, keepdims=True)
+        #x_var = F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, 1), exclude=True, keepdims=True)
+        if not use_global:
+            x_var = F.mean(F.square(F.broadcast_sub(x, x_mean)), axis=(0, 1), exclude=True, keepdims=True)
+            x = F.broadcast_div(F.broadcast_sub(x, x_mean), F.sqrt(x_var + self.eps))
+        else:
+            increment = (1 - self.n / self.N) * (x_mean - global_mean)
+            global_mean = global_mean + increment
+            x_var = F.sum(F.square(F.broadcast_sub(x, global_mean)), axis=(0, 1), exclude=True, keepdims=True)
+            global_var = (global_var + F.square(increment)) * (self.n / self.N) + x_var / self.N
+            x = F.broadcast_div(F.broadcast_sub(x, global_mean), F.sqrt(global_var + self.eps))
         x = x.reshape((0, -3, 0, 0))
-        return F.broadcast_add(F.broadcast_mul(x, gamma.reshape((1, self.in_channels, 1, 1))),
-                               beta.reshape((1, self.in_channels, 1, 1)))
+        out =  F.broadcast_add(F.broadcast_mul(x, gamma.reshape((1, -1, 1, 1))),
+                               beta.reshape((1, -1, 1, 1)))
+        if self.return_global:
+            return out, global_mean
 
     def __repr__(self):
         s = '{name}({content}'
