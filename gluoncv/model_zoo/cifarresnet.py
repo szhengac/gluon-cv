@@ -29,6 +29,7 @@ from mxnet.gluon.block import HybridBlock
 from mxnet.gluon import nn
 from mxnet import cpu
 from .bgnorm import BGNorm
+from .groupnorm import GroupNorm
 
 # Helpers
 def _conv3x3(channels, stride, in_channels):
@@ -56,18 +57,15 @@ class CIFARBasicBlockV1(HybridBlock):
     def __init__(self, channels, stride, downsample=False, in_channels=0, num_groups=32, **kwargs):
         super(CIFARBasicBlockV1, self).__init__(**kwargs)
         self.conv_1 = _conv3x3(channels, stride, in_channels)
-        self.bn_1 = BGNorm(num_groups=num_groups, in_channels=channels, return_global=True)
-        #self.body.add(nn.BatchNorm())
-        self.activation = nn.Activation('relu'))
+        self.bn_1 = GroupNorm(num_groups=num_groups, in_channels=channels, return_stat=True)
+        self.activation = nn.Activation('relu')
         self.conv_2 = _conv3x3(channels, 1, channels)
-        #self.body.add(nn.BatchNorm())
-        self.bn_2 = BGNorm(num_groups=num_groups, in_channels=channels, use_global=True, return_global=True)
+        self.bn_2 = BGNorm(num_groups=num_groups, in_channels=channels)
         if downsample:
-            #self.downsample = nn.HybridSequential(prefix='')
-            self.conv_3 = nn.Conv2D(channels, kernel_size=1, strides=stride,
-                                    use_bias=False, in_channels=in_channels))
-            #self.body.add(nn.BatchNorm())
-            self.bn_3 = BGNorm(num_groups=num_groups, in_channels=channels)
+            self.downsample = nn.HybridSequential(prefix='')
+            self.downsample.add(nn.Conv2D(channels, kernel_size=1, strides=stride,
+                                          use_bias=False, in_channels=in_channels))
+            self.downsample.add(GroupNorm(num_groups=num_groups, in_channels=channels))
         else:
             self.downsample = None
 
@@ -78,13 +76,11 @@ class CIFARBasicBlockV1(HybridBlock):
         x = self.conv_1(x) 
         x, global_mean, global_var = self.bn_1(x)
         x = self.activation(x)
-        x = self.conv_2(x)  
+        x = self.conv_2(x)
         x, global_mean, global_var = self.bn_2(x, global_mean, global_var)   
 
         if self.downsample:
-            #residual = self.downsample(residual)
-            residual = self.conv_3(residual)
-            residual = self.bn_3(residual)
+            residual = self.downsample(residual)
 
         x = F.Activation(residual+x, act_type='relu')
 
@@ -158,8 +154,7 @@ class CIFARResNetV1(HybridBlock):
         with self.name_scope():
             self.features = nn.HybridSequential(prefix='')
             self.features.add(nn.Conv2D(channels[0], 3, 1, 1, use_bias=False))
-            self.features.add(BGNorm(num_groups=num_groups[0], in_channels=channels[0]))
-            #self.features.add(nn.BatchNorm())
+            self.features.add(GroupNorm(num_groups=num_groups[0], in_channels=channels[0]))
 
             for i, num_layer in enumerate(layers):
                 stride = 1 if i == 0 else 2
