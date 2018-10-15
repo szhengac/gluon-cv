@@ -13,6 +13,7 @@ class BGNorm(HybridBlock):
                  in_channels=0, **kwargs):
         super(BGNorm, self).__init__(**kwargs)
         assert axis == 1
+        self.axis = axis
         if in_channels != 0:
             self.in_channels = in_channels
             assert in_channels % num_groups == 0
@@ -31,8 +32,8 @@ class BGNorm(HybridBlock):
         super(BGNorm, self).cast(dtype)
 
     def hybrid_forward(self, F, x, gamma):
-        x_norm = F.norm(x, axis=(2, 3), keepdims=True)
-        x = F.broadcast_div(x, x_norm + self.eps)
+        x_max = F.max(x, axis=(0, self.axis), exclude=True, keepdims=True)
+        x = F.broadcast_div(x, x_max + self.eps)
         out = F.broadcast_mul(x, gamma.reshape((1, -1, 1, 1)))
         return out
 
