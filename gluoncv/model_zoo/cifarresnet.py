@@ -72,7 +72,6 @@ class CIFARBasicBlockV1(HybridBlock):
     def hybrid_forward(self, F, x):
         """Hybrid forward"""
         residual = x
-    
         x = self.conv_1(x) 
         x, global_mean, global_var = self.bn_1(x)
         x = self.activation(x)
