@@ -48,7 +48,7 @@ class BGNorm(HybridBlock):
         super(BGNorm, self).cast(dtype)
 
     def __call__(self, x):
-        super(BGNorm, self).__call__(x)
+        return super(BGNorm, self).__call__(x)
 
     def forward(self, x):
         if autograd.is_training():
