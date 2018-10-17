@@ -20,7 +20,7 @@ class BGNorm(HybridBlock):
             self.in_channels = in_channels
 
         self.momentum = momentum
-        self.p = 0.5
+        self.p = 0.
         self.eps = epsilon
 
         self.gamma = self.params.get('gamma', grad_req='write' if scale else 'null',
@@ -31,12 +31,12 @@ class BGNorm(HybridBlock):
                                     shape=(in_channels,), init=beta_initializer,
                                     allow_deferred_init=True,
                                     differentiable=center)
-        self.running_mean = self.params.get('cluster_means', grad_req='null',
+        self.running_mean = self.params.get('running_mean', grad_req='null',
                                             shape=(in_channels,),
                                             init=running_mean_initializer,
                                             allow_deferred_init=True,
                                             differentiable=False)
-        self.running_var = self.params.get('cluster_vars', grad_req='null',
+        self.running_var = self.params.get('running_var', grad_req='null',
                                            shape=(in_channels,),
                                            init=running_variance_initializer,
                                            allow_deferred_init=True,
@@ -51,6 +51,7 @@ class BGNorm(HybridBlock):
         return super(BGNorm, self).__call__(x)
 
     def forward(self, x):
+        #if False:
         if autograd.is_training():
             N, _, W, H = x.shape
             self.K = N * W * H
@@ -63,14 +64,14 @@ class BGNorm(HybridBlock):
         return out
 
     def hybrid_forward(self, F, x, gamma, beta, running_mean, running_var):
+        #if False:
         if autograd.is_training():
             x_mean = F.mean(x, axis=self.axis, exclude=True, keepdims=True)
-            x_var = 0.5 * (F.mean(F.square(F.broadcast_sub(2 * x, x_mean)),
-                                  axis=self.axis, exclude=True, keepdims=True)
-                           + F.square(x_mean))
-            x = F.broadcast_div(x, F.sqrt(x_var + self.eps))
-            running_mean = self.momentum * running_mean + (1 - self.momentum) * running_mean
-            running_var = self.momentum * running_var + ((1 - self.momentum) * (self.K / (self.K - 1))) * running_var
+            x_var = (1. - self.p) * F.mean(F.square(F.broadcast_sub(x / (1. - self.p), x_mean)),
+                                           axis=self.axis, exclude=True, keepdims=True) + self.p * F.square(x_mean)
+            x = F.broadcast_div(F.broadcast_sub(x, x_mean), F.sqrt(x_var + self.eps))
+            running_mean = self.momentum * running_mean + (1 - self.momentum) * x_mean.reshape((-1))
+            running_var = self.momentum * running_var + ((1 - self.momentum) * (self.K / (self.K - 1))) * x_var.reshape((-1))
             out = F.broadcast_add(F.broadcast_mul(x, gamma.reshape((1, -1, 1, 1))),
                                   beta.reshape((1, -1, 1, 1)))
             return out, running_mean, running_var
