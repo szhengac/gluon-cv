@@ -20,7 +20,7 @@ class BGNorm(HybridBlock):
             self.in_channels = in_channels
 
         self.momentum = momentum
-        self.p = 0.
+        self.p = 0.5
         self.eps = epsilon
 
         self.gamma = self.params.get('gamma', grad_req='write' if scale else 'null',
