@@ -116,7 +116,7 @@ class CIFARWideResNet(HybridBlock):
                 self.features.add(self._make_layer(block, num_layer, channels[i+1], drop_rate,
                                                    stride, i+1, in_channels=in_channels))
                 in_channels = channels[i+1]
-            self.features.add(BGNorm(in_channels=channels[num_layer]))
+            self.features.add(BGNorm(in_channels=channels[len(layers)]))
             self.features.add(nn.Activation('relu'))
             self.features.add(nn.GlobalAvgPool2D())
             self.features.add(nn.Flatten())
