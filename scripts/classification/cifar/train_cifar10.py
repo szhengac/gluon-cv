@@ -21,6 +21,8 @@ parser.add_argument('--batch-size', type=int, default=32,
                     help='training batch size per device (CPU/GPU).')
 parser.add_argument('--num-gpus', type=int, default=0,
                     help='number of gpus to use.')
+parser.add_argument('--gpu-id', type=int, default=0,
+                    help='gpu id.')
 parser.add_argument('--model', type=str, default='resnet',
                     help='model to use. options are resnet and wrn. default is resnet.')
 parser.add_argument('-j', '--num-data-workers', dest='num_workers', default=4, type=int,
@@ -47,6 +49,8 @@ parser.add_argument('--save-period', type=int, default=10,
                     help='period in epoch of model saving.')
 parser.add_argument('--save-dir', type=str, default='params',
                     help='directory of saved models')
+parser.add_argument('--logging-dir', type=str, default='logs',
+                    help='directory of training logs')
 parser.add_argument('--resume-from', type=str,
                     help='resume training from the model')
 parser.add_argument('--save-plot-dir', type=str, default='.',
@@ -59,6 +63,8 @@ classes = 10
 num_gpus = opt.num_gpus
 batch_size *= max(1, num_gpus)
 context = [mx.gpu(i) for i in range(num_gpus)] if num_gpus > 0 else [mx.cpu()]
+if len(context) == 1:
+    context = [mx.gpu(opt.gpu_id)]
 num_workers = opt.num_workers
 
 lr_decay = opt.lr_decay
@@ -85,7 +91,13 @@ else:
 
 plot_path = opt.save_plot_dir
 
-logging.basicConfig(level=logging.INFO)
+logging_handlers = [logging.StreamHandler()]
+if opt.logging_dir:
+    logging_dir = opt.logging_dir
+    makedirs(logging_dir)
+    logging_handlers.append(logging.FileHandler('%s/train_cifar10_%s_%s.log'%(logging_dir, model_name, opt.gpu_id)))
+
+logging.basicConfig(level=logging.INFO, handlers = logging_handlers)
 logging.info(opt)
 
 transform_train = transforms.Compose([
@@ -166,21 +178,21 @@ def train(epochs, ctx):
         name, acc = train_metric.get()
         name, val_acc = test(ctx, val_data)
         train_history.update([1-acc, 1-val_acc])
-        train_history.plot(save_path='%s/%s_history.png'%(plot_path, model_name))
+        train_history.plot(save_path='%s/%s-%s_history.png'%(plot_path, model_name, opt.gpu_id))
 
         if val_acc > best_val_score:
             best_val_score = val_acc
-            net.save_parameters('%s/%.4f-cifar-%s-%d-best.params'%(save_dir, best_val_score, model_name, epoch))
+            net.save_parameters('%s/%.4f-cifar-%s-%s-%d-best.params'%(save_dir, best_val_score, model_name, opt.gpu_id, epoch))
 
         name, val_acc = test(ctx, val_data)
         logging.info('[Epoch %d] train=%f val=%f loss=%f time: %f' %
             (epoch, acc, val_acc, train_loss, time.time()-tic))
 
         if save_period and save_dir and (epoch + 1) % save_period == 0:
-            net.save_parameters('%s/cifar10-%s-%d.params'%(save_dir, model_name, epoch))
+            net.save_parameters('%s/cifar10-%s-%s-%d.params'%(save_dir, model_name, opt.gpu_id, epoch))
 
     if save_period and save_dir:
-        net.save_parameters('%s/cifar10-%s-%d.params'%(save_dir, model_name, epochs-1))
+        net.save_parameters('%s/cifar10-%s-%s-%d.params'%(save_dir, model_name, opt.gpu_id, epochs-1))
 
 def main():
     if opt.mode == 'hybrid':

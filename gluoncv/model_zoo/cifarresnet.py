@@ -29,10 +29,12 @@ from mxnet.gluon.block import HybridBlock
 from mxnet.gluon import nn
 from mxnet import cpu
 
+from .bgnorm import BGNorm
+
 # Helpers
-def _conv3x3(channels, stride, in_channels):
+def _conv3x3(channels, stride, in_channels, params=None):
     return nn.Conv2D(channels, kernel_size=3, strides=stride, padding=1,
-                     use_bias=False, in_channels=in_channels)
+                     use_bias=False, in_channels=in_channels, params=params)
 
 
 # Blocks
@@ -52,30 +54,45 @@ class CIFARBasicBlockV1(HybridBlock):
     in_channels : int, default 0
         Number of input channels. Default is 0, to infer from the graph.
     """
-    def __init__(self, channels, stride, downsample=False, in_channels=0, **kwargs):
+    def __init__(self, channels, stride, downsample=False, in_channels=0, T=4, **kwargs):
         super(CIFARBasicBlockV1, self).__init__(**kwargs)
         self.body = nn.HybridSequential(prefix='')
-        self.body.add(_conv3x3(channels, stride, in_channels))
-        self.body.add(nn.BatchNorm())
+        conv_1 = _conv3x3(channels, stride, in_channels)
+        self.body.add(conv_1)
+        self.body.add(BGNorm(in_channels=channels))
         self.body.add(nn.Activation('relu'))
-        self.body.add(_conv3x3(channels, 1, channels))
-        self.body.add(nn.BatchNorm())
+        conv_2 = _conv3x3(channels, 1, channels)
+        self.body.add(conv_2)
+        self.body.add(BGNorm(in_channels=channels))
         if downsample:
             self.downsample = nn.HybridSequential(prefix='')
             self.downsample.add(nn.Conv2D(channels, kernel_size=1, strides=stride,
                                           use_bias=False, in_channels=in_channels))
-            self.downsample.add(nn.BatchNorm())
+            self.downsample.add(BGNorm(in_channels=channels))
         else:
             self.downsample = None
+            self.blocks = nn.HybridSequential()
+            self.blocks.add(self.body)
+            for i in range(T - 1):
+                block = nn.HybridSequential(prefix='fwd_' + str(i + 1))
+                block.add(_conv3x3(channels, stride, in_channels, params=conv_1.collect_params())) 
+                block.add(BGNorm(in_channels=channels))
+                block.add(nn.Activation('relu'))
+                block.add(_conv3x3(channels, 1, channels, params=conv_2.collect_params()))
+                block.add(BGNorm(in_channels=channels))
+                self.blocks.add(block)  
 
     def hybrid_forward(self, F, x):
         """Hybrid forward"""
-        residual = x
-
-        x = self.body(x)
-
         if self.downsample:
-            residual = self.downsample(residual)
+           residual = x
+           x = self.body(x)
+           residual = self.downsample(residual)
+        else:        
+           residual = 0
+           for block in self.blocks:
+               residual = residual + x
+               x = block(x)
 
         x = F.Activation(residual+x, act_type='relu')
 
@@ -149,7 +166,7 @@ class CIFARResNetV1(HybridBlock):
         with self.name_scope():
             self.features = nn.HybridSequential(prefix='')
             self.features.add(nn.Conv2D(channels[0], 3, 1, 1, use_bias=False))
-            self.features.add(nn.BatchNorm())
+            self.features.add(BGNorm(in_channels=channels[0]))
 
             for i, num_layer in enumerate(layers):
                 stride = 1 if i == 0 else 2
