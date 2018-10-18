@@ -100,31 +100,34 @@ class CIFARBasicBlockV2(HybridBlock):
     """
     def __init__(self, channels, stride, downsample=False, in_channels=0, **kwargs):
         super(CIFARBasicBlockV2, self).__init__(**kwargs)
-        self.bn1 = nn.BatchNorm()
-        self.conv1 = _conv3x3(channels, stride, in_channels)
-        self.bn2 = nn.BatchNorm()
-        self.conv2 = _conv3x3(channels, 1, channels)
+        self.body1 = self.make_block(channels, stride, in_channels, 'fwd1')
+        self.body2 = self.make_block(channels, stride, in_channels, 'fwd2')
+
         if downsample:
             self.downsample = nn.Conv2D(channels, 1, stride, use_bias=False,
                                         in_channels=in_channels)
         else:
             self.downsample = None
 
+    def make_block(self, channels, stride, in_channels, prefix=None):
+        body = nn.HybridSequential(prefix)
+        body.add(nn.BatchNorm())
+        body.add(nn.Activation('relu'))
+        body.add(_conv3x3(channels, stride, in_channels))
+        body.add(nn.BatchNorm())
+        body.add(nn.Activation('relu'))
+        body.add(_conv3x3(channels, 1, channels))
+
     def hybrid_forward(self, F, x):
         """Hybrid forward"""
         residual = x
 
-        x = self.bn1(x)
-        x = F.Activation(x, act_type='relu')
-        x = self.conv1(x)
-
-        x = self.bn2(x)
-        x = F.Activation(x, act_type='relu')
-        x = self.conv2(x)
+        x1 = self.body1(x)
+        x2 = self.body2(x)
 
         if self.downsample:
             residual = self.downsample(residual)
-        return x + residual
+        return residual + (x1 - x2) / 2
 
 # Nets
 class CIFARResNetV1(HybridBlock):
