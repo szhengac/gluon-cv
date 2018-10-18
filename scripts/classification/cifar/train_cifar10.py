@@ -62,8 +62,8 @@ classes = 10
 
 num_gpus = opt.num_gpus
 batch_size *= max(1, num_gpus)
-#context = [mx.gpu(i) for i in range(num_gpus)] if num_gpus > 0 else [mx.cpu()]
-context = [mx.gpu(opt.gpu_id)]
+context = [mx.gpu(i) for i in range(num_gpus)] if num_gpus > 0 else [mx.cpu()]
+#context = [mx.gpu(opt.gpu_id)]
 num_workers = opt.num_workers
 
 lr_decay = opt.lr_decay
