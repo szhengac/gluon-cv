@@ -117,6 +117,7 @@ class CIFARBasicBlockV2(HybridBlock):
         body.add(nn.BatchNorm())
         body.add(nn.Activation('relu'))
         body.add(_conv3x3(channels, 1, channels))
+        return body
 
     def hybrid_forward(self, F, x):
         """Hybrid forward"""
