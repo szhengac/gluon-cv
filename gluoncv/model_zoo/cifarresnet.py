@@ -35,6 +35,28 @@ def _conv3x3(channels, stride, in_channels):
                      use_bias=False, in_channels=in_channels)
 
 
+class MHybridSequential(nn.HybridSequential):
+    """Stacks HybridBlocks sequentially.
+
+    Example::
+
+        net = nn.HybridSequential()
+        # use net's name_scope to give child Blocks appropriate names.
+        with net.name_scope():
+            net.add(nn.Dense(10, activation='relu'))
+            net.add(nn.Dense(20))
+        net.hybridize()
+    """
+    def __init__(self, prefix=None, params=None):
+        super(MHybridSequential, self).__init__(prefix=prefix, params=params)
+
+    def hybrid_forward(self, F, x, y, z):
+        for block in self._children.values():
+            x, y, z = block(x, y, z)
+        return x, y, z
+
+
+
 # Blocks
 class CIFARBasicBlockV1(HybridBlock):
     r"""BasicBlock V1 from `"Deep Residual Learning for Image Recognition"
@@ -99,15 +121,21 @@ class CIFARBasicBlockV2(HybridBlock):
         Number of input channels. Default is 0, to infer from the graph.
     """
     def __init__(self, channels, stride, downsample=False, in_channels=0,
-                 down_channels=None, down_stride=None, **kwargs):
+                 aggregated_downsample=False, down_channels=None, down_stride=None, **kwargs):
         super(CIFARBasicBlockV2, self).__init__(**kwargs)
         self.body = self.make_block(channels, stride, in_channels, 'fwd')
 
         if downsample:
-            self.downsample = nn.Conv2D(down_channels, 1, down_stride, use_bias=False,
+            self.downsample = nn.Conv2D(channels, 1, stride, use_bias=False,
                                         in_channels=in_channels)
         else:
             self.downsample = None
+
+        if aggregated_downsample:
+            self.aggregated_downsample = nn.Conv2D(down_channels, 1, down_stride, use_bias=False,
+                                                   in_channels=in_channels)
+        else:
+            self.aggregated_downsample = None
 
     def make_block(self, channels, stride, in_channels, prefix=None):
         body = nn.HybridSequential(prefix)
@@ -119,18 +147,20 @@ class CIFARBasicBlockV2(HybridBlock):
         body.add(_conv3x3(channels, 1, channels))
         return body
 
-    def hybrid_forward(self, F, input):
+    def hybrid_forward(self, F, x, residual, aggregated_residual):
         """Hybrid forward"""
-        x, residual = input
+        out = x + residual
+        if self.aggregated_downsample:
+            aggregated_residual = aggregated_residual + self.aggregated_downsample(out)
+        else:
+            aggregated_residual = aggregated_residual + out
+
+        out = self.body(out)
 
         if self.downsample:
-            residual = residual + self.downsample(x)
-        else:
-            residual = residual + x
+            x = self.downsample(x)
 
-        x = self.body(x)
-
-        return [x, residual]
+        return out, x, aggregated_residual
 
 # Nets
 class CIFARResNetV1(HybridBlock):
@@ -177,7 +207,7 @@ class CIFARResNetV1(HybridBlock):
 
     def hybrid_forward(self, F, x):
         x = self.pre(x)
-        x, residual = self.features([x, x])
+        x, residual = self.features(x, x)
         x = x + residual
         x = self.pool(x)
         x = self.output(x)
@@ -212,8 +242,8 @@ class CIFARResNetV2(HybridBlock):
 
             in_channels = channels[0]
             down_channels = channels[-1]
-            down_strides = [4, 2, 1]
-            self.features = nn.HybridSequential(prefix='feature')
+            down_strides = [4, 4, 2]
+            self.features = MHybridSequential(prefix='feature')
             for i, num_layer in enumerate(layers):
                 stride = 1 if i == 0 else 2
                 self.features.add(self._make_layer(block, num_layer, channels[i+1],
@@ -231,18 +261,19 @@ class CIFARResNetV2(HybridBlock):
 
     def _make_layer(self, block, layers, channels, stride, stage_index, in_channels=0,
                     down_channels=None, down_stride=None):
-        layer = nn.HybridSequential(prefix='stage%d_'%stage_index)
+        layer = MHybridSequential(prefix='stage%d_'%stage_index)
         with layer.name_scope():
-            layer.add(block(channels, stride, down_channels != in_channels, in_channels=in_channels,
-                            down_channels=down_channels, down_stride=down_stride, prefix=''))
+            layer.add(block(channels, stride, channels != in_channels, in_channels=in_channels,
+                            aggregated_downsample=down_channels != in_channels, down_channels=down_channels, down_stride=down_stride, prefix=''))
+            down_stride //= stride
             for _ in range(layers-1):
-                layer.add(block(channels, 1, down_channels != in_channels, in_channels=channels,
-                                down_channels=down_channels, down_stride=down_stride, prefix=''))
+                layer.add(block(channels, 1, False, in_channels=channels,
+                                aggregated_downsample=down_channels != in_channels, down_channels=down_channels, down_stride=down_stride, prefix=''))
         return layer
 
     def hybrid_forward(self, F, x):
         x = self.pre(x)
-        x, residual = self.features([x, x])
+        x, _, residual = self.features(x, 0, 0)
         x = x + residual
         x = self.post(x)
         x = self.output(x)
