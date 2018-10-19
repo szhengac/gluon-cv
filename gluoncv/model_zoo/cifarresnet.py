@@ -128,7 +128,7 @@ class CIFARBasicBlockV2(HybridBlock):
 
         if self.downsample:
             residual = self.downsample(residual)
-        return residual + (x1 - x2) / 2
+        return residual + (x1 - x2) / 1
 
 # Nets
 class CIFARResNetV1(HybridBlock):
