@@ -98,22 +98,22 @@ class CIFARBasicBlockV2(HybridBlock):
     in_channels : int, default 0
         Number of input channels. Default is 0, to infer from the graph.
     """
-    def __init__(self, channels, stride, downsample=False, in_channels=0, **kwargs):
+    def __init__(self, channels, stride, downsample=False, in_channels=0, epsilon=1e-5, **kwargs):
         super(CIFARBasicBlockV2, self).__init__(**kwargs)
         self.body1 = self.make_block(channels, stride, in_channels, prefix='fwd1')
-        self.body2 = self.make_block(channels, 1, channels, prefix='fwd2')
+        self.body2 = self.make_block(channels, 1, channels, epsilon=epsilon, prefix='fwd2')
         if downsample:
             self.downsample = nn.Conv2D(channels, 1, stride, use_bias=False,
                                         in_channels=in_channels)
         else:
             self.downsample = None
 
-    def make_block(self, channels, stride, in_channels, prefix=None):
+    def make_block(self, channels, stride, in_channels, epsilon=1e-5, prefix=None):
         body = nn.HybridSequential(prefix=prefix)
-        body.add(nn.BatchNorm())
+        body.add(nn.BatchNorm(epsilon=epsilon))
         body.add(nn.Activation('relu'))
         body.add(_conv3x3(channels, stride, in_channels))
-        body.add(nn.BatchNorm())
+        body.add(nn.BatchNorm(epsilon=epsilon))
         body.add(nn.Activation('relu'))
         body.add(_conv3x3(channels, 1, channels))
         return body
