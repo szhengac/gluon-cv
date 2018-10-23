@@ -55,7 +55,7 @@ class CIFARBasicBlockV2(HybridBlock):
         self.bn1 = nn.BatchNorm()
         self.bn2 = nn.BatchNorm()
         self.body1 = self.make_block(channels, stride, in_channels, drop_rate=drop_rate, prefix='fwd1')
-        self.body2 = self.make_block(channels, stride, in_channels, drop_rate=drop_rate, prefix='fwd2')
+        self.body2 = self.make_block(channels, 1, channels, drop_rate=drop_rate, prefix='fwd2')
         if downsample:
             self.downsample = nn.Conv2D(channels, 1, stride, use_bias=False,
                                         in_channels=in_channels)
